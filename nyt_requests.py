@@ -22,7 +22,7 @@ NY_TZ = ZoneInfo("America/New_York")
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.INFO,  # Back to INFO level for cleaner output
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
@@ -404,9 +404,28 @@ class NYTRequestsScraper:
             
             # Look for images in the article container
             images = article_container.find_all('img')
-            if images:
+            
+            # Filter out very small images (likely icons, not article images)
+            main_images = []
+            for img in images:
+                src = img.get('src', '')
+                # Skip if it looks like an icon or very small image
+                if any(skip in src.lower() for skip in ['icon', 'logo', 'favicon', 'avatar']):
+                    continue
+                # Check for width/height attributes to filter out small images
+                width = img.get('width')
+                height = img.get('height')
+                if width and height:
+                    try:
+                        if int(width) < 100 or int(height) < 100:
+                            continue
+                    except ValueError:
+                        pass
+                main_images.append(img)
+            
+            if main_images:
                 # Get the first (usually main) image
-                img = images[0]
+                img = main_images[0]
                 src = img.get('src')
                 if src:
                     # Make sure it's a full URL
@@ -417,18 +436,66 @@ class NYTRequestsScraper:
                     elif not src.startswith('http'):
                         src = self.base_url + '/' + src
                     
-                    # Try to get a higher quality version if available
-                    # NYT often has different sizes in the URL
-                    if 'square320' in src:
-                        # Try to get a larger version
-                        src = src.replace('square320', 'articleLarge')
+                    # Store original src for fallback
+                    original_src = src
                     
-                    return src
+                    # Try to get a higher quality version if available
+                    upgraded_src = self._upgrade_image_quality(src)
+                    
+                    # Verify the upgraded image exists, fallback to original if not
+                    if upgraded_src != original_src:
+                        if self._verify_image_url(upgraded_src):
+                            return upgraded_src
+                        else:
+                            logger.debug(f"Upgraded image URL failed, using original: {original_src}")
+                            return original_src
+                    else:
+                        return src
                     
         except Exception as e:
             logger.debug(f"Error finding image: {e}")
             
         return ""
+    
+    def _verify_image_url(self, url: str) -> bool:
+        """Verify if an image URL is accessible."""
+        try:
+            response = requests.head(url, timeout=5)
+            return response.status_code == 200
+        except Exception:
+            return False
+    
+    def _upgrade_image_quality(self, src: str) -> str:
+        """Try to upgrade image URL to higher quality version."""
+        try:
+            # Common NYT image size patterns to upgrade
+            upgrades = {
+                'square320': 'articleLarge',
+                'square640': 'articleLarge', 
+                'mediumSquare149': 'articleLarge',
+                'moth': 'articleLarge',
+                'filmstrip': 'articleLarge',
+                'thumbStandard': 'articleLarge',
+                'thumbLarge': 'articleLarge'
+            }
+            
+            for old_size, new_size in upgrades.items():
+                if old_size in src:
+                    return src.replace(old_size, new_size)
+            
+            # If no specific pattern found, but it's a static01.nyt.com image,
+            # try to ensure quality parameters are optimal
+            if 'static01.nyt.com' in src:
+                # Ensure good quality settings if they exist
+                if 'quality=' in src:
+                    # Upgrade quality to 75 if it's lower
+                    import re
+                    src = re.sub(r'quality=(\d+)', lambda m: f'quality={max(75, int(m.group(1)))}', src)
+                
+            return src
+        except Exception as e:
+            logger.debug(f"Error upgrading image quality: {e}")
+            return src
     
     def _find_favicon(self, soup: BeautifulSoup) -> Optional[str]:
         """Extract the best favicon/icon URL from the page."""
