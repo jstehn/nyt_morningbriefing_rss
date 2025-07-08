@@ -3,10 +3,15 @@
 Flask web server to serve NYT Morning Briefing RSS feed
 """
 
-from flask import Flask, Response, request
+from flask import Flask, Response, request, jsonify
 import logging
 import sys
+import datetime
+from zoneinfo import ZoneInfo
 from nyt_requests import generate_nytimes_morning_briefing_rss
+
+# New York timezone
+NY_TZ = ZoneInfo("America/New_York")
 
 # Configure logging
 logging.basicConfig(
@@ -54,7 +59,11 @@ def serve_rss():
 @app.route('/health')
 def health_check():
     """Health check endpoint for Docker."""
-    return Response("OK", mimetype='text/plain')
+    return jsonify({
+        "status": "healthy",
+        "timestamp": datetime.datetime.now(NY_TZ).isoformat(),
+        "service": "nyt-rss-feed"
+    })
 
 @app.route('/favicon.ico')
 def favicon():

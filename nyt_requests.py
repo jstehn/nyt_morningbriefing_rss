@@ -9,12 +9,16 @@ import requests
 from bs4 import BeautifulSoup
 from feedgen.feed import FeedGenerator
 import datetime
+from zoneinfo import ZoneInfo
 import logging
 import sys
 import re
 from typing import Optional, List, Dict, Any
 import dateutil.parser
 from urllib.parse import urljoin
+
+# New York timezone
+NY_TZ = ZoneInfo("America/New_York")
 
 # Configure logging
 logging.basicConfig(
@@ -226,7 +230,8 @@ class NYTRequestsScraper:
             date_match = re.search(r'/(\d{4})/(\d{2})/(\d{2})/', href)
             if date_match:
                 year, month, day = date_match.groups()
-                return datetime.datetime(int(year), int(month), int(day), tzinfo=datetime.timezone.utc)
+                # Create datetime in NY timezone, set to midnight for date-only format
+                return datetime.datetime(int(year), int(month), int(day), 6, 30, 0, tzinfo=NY_TZ)
             
             # Try to find date text near the link
             parent = link_element.parent
@@ -243,16 +248,20 @@ class NYTRequestsScraper:
                     match = re.search(pattern, text)
                     if match:
                         try:
-                            return dateutil.parser.parse(match.group()).replace(tzinfo=datetime.timezone.utc)
+                            # Parse, set to midnight, and set timezone
+                            parsed_date = dateutil.parser.parse(match.group())
+                            return parsed_date.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=NY_TZ)
                         except Exception:
                             continue
             
-            # Default to today if no date found
-            return datetime.datetime.now(datetime.timezone.utc)
+            # Default to today at midnight if no date found
+            today = datetime.datetime.now(NY_TZ)
+            return today.replace(hour=0, minute=0, second=0, microsecond=0)
             
         except Exception as e:
             logger.debug(f"Error extracting date: {e}")
-            return datetime.datetime.now(datetime.timezone.utc)
+            today = datetime.datetime.now(NY_TZ)
+            return today.replace(hour=0, minute=0, second=0, microsecond=0)
     
     def generate_rss(self) -> bytes:
         """Generate RSS feed."""
@@ -286,7 +295,7 @@ class NYTRequestsScraper:
         finally:
             if self.session:
                 self.session.close()
-    
+
     def _build_rss_feed(self, articles: List[Dict[str, Any]], favicon_url: Optional[str] = None) -> bytes:
         """Build RSS feed from article data."""
         fg = FeedGenerator()
@@ -309,7 +318,7 @@ class NYTRequestsScraper:
             except Exception as e:
                 logger.debug(f"Error adding favicon to RSS: {e}")
         
-        fg.pubDate(datetime.datetime.now(datetime.timezone.utc))
+        fg.pubDate(datetime.datetime.now(NY_TZ))
         
         logger.info(f"Building RSS feed with {len(articles)} articles")
         
@@ -351,14 +360,15 @@ class NYTRequestsScraper:
                     fe.published(article['pub_date'])
                     fe.pubDate(article['pub_date'])
                 else:
-                    current_time = datetime.datetime.now(datetime.timezone.utc)
+                    current_time = datetime.datetime.now(NY_TZ)
                     fe.published(current_time)
                     fe.pubDate(current_time)
-                
+                    
             except Exception as e:
                 logger.warning(f"Error adding article {i+1} to feed: {e}")
                 continue
         
+        # Generate RSS XML
         return fg.rss_str(pretty=True)
     
     def _generate_error_feed(self, error_message: str) -> bytes:
@@ -368,15 +378,15 @@ class NYTRequestsScraper:
         fg.link(href=self.url, rel='alternate')
         fg.description(f'Error generating feed: {error_message}')
         fg.language('en')
-        fg.pubDate(datetime.datetime.now(datetime.timezone.utc))
+        fg.pubDate(datetime.datetime.now(NY_TZ))
         
         fe = fg.add_entry()
         fe.id(self.url)
         fe.title('Error generating feed')
         fe.link(href=self.url, rel='alternate')
         fe.description(error_message)
-        fe.published(datetime.datetime.now(datetime.timezone.utc))
-        fe.pubDate(datetime.datetime.now(datetime.timezone.utc))
+        fe.published(datetime.datetime.now(NY_TZ))
+        fe.pubDate(datetime.datetime.now(NY_TZ))
         
         return fg.rss_str(pretty=True)
     
